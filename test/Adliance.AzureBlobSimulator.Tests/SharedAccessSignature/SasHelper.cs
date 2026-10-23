@@ -44,9 +44,9 @@ public class SasHelper(IOptions<StorageOptions> options, SasValidatorService val
         return sr switch
         {
             "c" => validator.GenerateSignature(
-                sp, st, se, canonicalizedResource ?? CanonicalizedResourceContainer, spr, sv, Convert.FromBase64String(accountKey)),
+                sp, st, se, canonicalizedResource ?? CanonicalizedResourceContainer, spr, sv, sr, Convert.FromBase64String(accountKey)),
             "b" => validator.GenerateSignature(
-                sp, st, se, canonicalizedResource ?? CanonicalizedResourceBlob, spr, sv, Convert.FromBase64String(accountKey)),
+                sp, st, se, canonicalizedResource ?? CanonicalizedResourceBlob, spr, sv, sr, Convert.FromBase64String(accountKey)),
             _ => throw new ArgumentException("Invalid sr value. Must be 'c' or 'b'.", nameof(sr))
         };
     }

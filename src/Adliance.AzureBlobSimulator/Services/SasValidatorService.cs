@@ -48,6 +48,14 @@ public sealed class SasValidatorService(
 
         TryGetOptional(query, "st", out var st);
         TryGetOptional(query, "spr", out var spr);
+        TryGetOptional(query, "si", out var si);
+        TryGetOptional(query, "sip", out var sip);
+        TryGetOptional(query, "ses", out var ses);
+        TryGetOptional(query, "rscc", out var rscc);
+        TryGetOptional(query, "rscd", out var rscd);
+        TryGetOptional(query, "rsce", out var rsce);
+        TryGetOptional(query, "rscl", out var rscl);
+        TryGetOptional(query, "rsct", out var rsct);
 
         var now = DateTimeOffset.UtcNow;
 
@@ -74,7 +82,7 @@ public sealed class SasValidatorService(
             return SasValidationResult.Fail("AuthenticationFailed", "Invalid resource.");
         }
 
-        var stringToSign = BuildStringToSign(sp, st, se, canonicalizedResource, spr, sv);
+        var stringToSign = BuildStringToSign(sp, st, se, canonicalizedResource, spr, sv, sr, si, sip, ses: ses, rscc: rscc, rscd: rscd, rsce: rsce, rscl: rscl, rsct: rsct);
         var computedSignature = ComputeSignature(stringToSign, accountKeyBytes);
 
         if (environment.IsDevelopment())
@@ -99,7 +107,13 @@ public sealed class SasValidatorService(
 
         if (!SignaturesEqual(computedSignature, signature))
         {
-            return SasValidationResult.Fail("AuthenticationFailed", "Signature mismatch.");
+            // Previous versions of the simulator always used the string-to-sign layout of version 2015-04-05, regardless of sv.
+            // SAS tokens generated that way are still accepted, so existing SAS URLs don't break.
+            var legacyStringToSign = BuildStringToSign(sp, st, se, canonicalizedResource, spr, sv, sr, si, sip, ses: ses, rscc: rscc, rscd: rscd, rsce: rsce, rscl: rscl, rsct: rsct, useLegacyLayout: true);
+            if (!SignaturesEqual(ComputeSignature(legacyStringToSign, accountKeyBytes), signature))
+            {
+                return SasValidationResult.Fail("AuthenticationFailed", "Signature mismatch.");
+            }
         }
 
         if (!IsPermissionAllowed(request.Method, sp))
@@ -119,6 +133,7 @@ public sealed class SasValidatorService(
     /// <param name="canonicalizedResource">Canonicalized resource path.</param>
     /// <param name="spr">Optional signed protocol (e.g., "https").</param>
     /// <param name="sv">SAS version.</param>
+    /// <param name="sr">Signed resource ("b" for blob, "c" for container).</param>
     /// <param name="key">Account key as a byte array.</param>
     /// <returns>The computed Base64-encoded signature string.</returns>
     public string GenerateSignature(string sp,
@@ -127,9 +142,10 @@ public sealed class SasValidatorService(
         string canonicalizedResource,
         string? spr,
         string sv,
+        string sr,
         byte[] key)
     {
-        var sts = BuildStringToSign(sp, st, se, canonicalizedResource, spr, sv);
+        var sts = BuildStringToSign(sp, st, se, canonicalizedResource, spr, sv, sr);
         return ComputeSignature(sts, key);
     }
 
@@ -214,6 +230,10 @@ public sealed class SasValidatorService(
     /// including empty values for optional parameters. The resulting string is later
     /// hashed (HMAC-SHA256) with the storage account key to produce the <c>sig</c> value.
     ///
+    /// The layout depends on the SAS version (sv): version 2018-11-09 adds signedResource and signedSnapshotTime,
+    /// version 2020-12-06 adds signedEncryptionScope. Versions before 2015-04-05 are not supported, see
+    /// https://learn.microsoft.com/en-us/rest/api/storageservices/create-service-sas#construct-the-signature-string
+    ///
     /// All parameters must already be normalized and formatted according to the
     /// expected SAS version.
     /// </remarks>
@@ -223,13 +243,17 @@ public sealed class SasValidatorService(
     /// <param name="canonicalizedResource">Canonicalized resource path (e.g., /blob/{account}/{container}/{blob}).</param>
     /// <param name="spr">Signed protocol (optional).</param>
     /// <param name="sv">Signed service version.</param>
+    /// <param name="sr">Signed resource ("b" for blob, "c" for container).</param>
     /// <param name="si">Signed identifier (optional).</param>
     /// <param name="sip">Signed IP range (optional).</param>
+    /// <param name="signedSnapshotTime">Snapshot time or version id (optional, only for snapshot and version resources, which are not supported by the simulator).</param>
+    /// <param name="ses">Signed encryption scope (optional).</param>
     /// <param name="rscc">Cache-Control response header override (optional).</param>
     /// <param name="rscd">Content-Disposition response header override (optional).</param>
     /// <param name="rsce">Content-Encoding response header override (optional).</param>
     /// <param name="rscl">Content-Language response header override (optional).</param>
     /// <param name="rsct">Content-Type response header override (optional).</param>
+    /// <param name="useLegacyLayout">Use the layout of version 2015-04-05 regardless of sv, as previous versions of the simulator did.</param>
     /// <returns>The fully constructed string-to-sign.</returns>
     private static string BuildStringToSign(
         string sp, // permissions
@@ -238,13 +262,17 @@ public sealed class SasValidatorService(
         string canonicalizedResource,
         string? spr, // signed protocol (optional)
         string sv, // SAS version
+        string sr, // signed resource
         string? si = null, // signed identifier (optional)
         string? sip = null, // signed IP (optional)
+        string? signedSnapshotTime = null, // snapshot time or version id (optional)
+        string? ses = null, // signed encryption scope (optional)
         string? rscc = null,
         string? rscd = null,
         string? rsce = null,
         string? rscl = null,
-        string? rsct = null
+        string? rsct = null,
+        bool useLegacyLayout = false
     )
     {
         var sb = new StringBuilder();
@@ -257,6 +285,18 @@ public sealed class SasValidatorService(
         sb.Append(sip ?? string.Empty).Append('\n');
         sb.Append(spr ?? string.Empty).Append('\n');
         sb.Append(sv).Append('\n');
+
+        if (!useLegacyLayout && IsVersionAtLeast(sv, "2018-11-09"))
+        {
+            sb.Append(sr).Append('\n');
+            sb.Append(signedSnapshotTime ?? string.Empty).Append('\n');
+        }
+
+        if (!useLegacyLayout && IsVersionAtLeast(sv, "2020-12-06"))
+        {
+            sb.Append(ses ?? string.Empty).Append('\n');
+        }
+
         sb.Append(rscc ?? string.Empty).Append('\n');
         sb.Append(rscd ?? string.Empty).Append('\n');
         sb.Append(rsce ?? string.Empty).Append('\n');
@@ -265,6 +305,18 @@ public sealed class SasValidatorService(
 
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Checks whether a SAS version is the same as or later than the given minimum version.
+    /// </summary>
+    /// <remarks>
+    /// SAS versions have the format yyyy-MM-dd, so an ordinal comparison orders them chronologically.
+    /// </remarks>
+    /// <param name="version">The SAS version (sv).</param>
+    /// <param name="minimumVersion">The minimum version, e.g. "2018-11-09".</param>
+    /// <returns>True if the version is the same as or later than the minimum version; otherwise, false.</returns>
+    private static bool IsVersionAtLeast(string version, string minimumVersion)
+        => string.CompareOrdinal(version, minimumVersion) >= 0;
 
     /// <summary>
     /// Computes the HMAC-SHA256 signature of a string using a given key.
