@@ -50,7 +50,7 @@ public class SharedKeyAuthService(ILogger<SharedKeyAuthService> logger, IOptions
             var pathSegments = request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries);
             if (pathSegments is { Length: >= 1 } && pathSegments[0].Equals(accountName))
             {
-                request.Path = "/" + string.Join('/', pathSegments.Skip(1)); // remove account from path
+                request.Path = new PathString("/" + string.Join('/', pathSegments.Skip(1))); // remove account from path (implicit string conversion would URL-decode again)
             }
             logger.LogDebug("SharedKey validated successfully for account \"{AccountName}\".", accountName);
             return true;
@@ -114,7 +114,9 @@ public class SharedKeyAuthService(ILogger<SharedKeyAuthService> logger, IOptions
 
     private static string BuildCanonicalizedResource(HttpRequest request, string accountName)
     {
-        var resource = $"/{accountName}{request.Path}";
+        // The spec requires the path "encoded exactly as it is in the URI", but request.Path is already decoded
+        // (e.g. "%2C" becomes ","), so we take the path from the raw request target instead.
+        var resource = $"/{accountName}{GetEncodedPath(request)}";
 
         if (!request.QueryString.HasValue)
         {
@@ -126,7 +128,7 @@ public class SharedKeyAuthService(ILogger<SharedKeyAuthService> logger, IOptions
         foreach (var param in request.Query)
         {
             var key = param.Key.ToLowerInvariant();
-            var value = string.Join(",", param.Value.ToArray());
+            var value = string.Join(",", param.Value.Order(StringComparer.Ordinal));
             queryParams[key] = value;
         }
 
@@ -136,6 +138,12 @@ public class SharedKeyAuthService(ILogger<SharedKeyAuthService> logger, IOptions
         }
 
         return resource;
+    }
+
+    private static string GetEncodedPath(HttpRequest request)
+    {
+        var path = request.PathBase.Add(request.Path).Value ?? "";
+        return string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
     }
 
     private static string? GetHeaderValue(HttpRequest request, string headerName)

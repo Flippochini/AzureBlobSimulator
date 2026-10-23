@@ -53,11 +53,15 @@ public class BlobControllerTests(WebApplicationFactory<Program> factory) : Contr
         await CustomAssert.RequestError(404, () => blobClient.UploadAsync(BinaryData.FromString("x")));
     }
 
-    [Fact]
-    public async Task Can_Get_Blob()
+    [Theory]
+    [InlineData("my-little-test-blob_1.pdf")]
+    [InlineData("my-little,test-blob_1.pdf")]
+    [InlineData("my-little, test-blob_1.pdf")]
+    [InlineData("my-little+test-blob_1.pdf")]
+    [InlineData("my-little%25test-blob_1.pdf")]
+    public async Task Can_Get_Blob(string blobName)
     {
         const string containerName = "test-container";
-        const string blobName = "my-little-test-blob_1.pdf";
         var containerPath = Path.Combine(TestStoragePath, containerName);
         Directory.CreateDirectory(containerPath);
         await File.WriteAllBytesAsync(Path.Combine(containerPath, blobName), "Hello World!"u8.ToArray());

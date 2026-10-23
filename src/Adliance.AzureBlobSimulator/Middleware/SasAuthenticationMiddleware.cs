@@ -1,4 +1,3 @@
-using System.Web;
 using Adliance.AzureBlobSimulator.Services;
 
 namespace Adliance.AzureBlobSimulator.Middleware;
@@ -10,14 +9,15 @@ public class SasAuthenticationMiddleware(RequestDelegate next, SasValidatorServi
         // Validate SAS token if present
         if (context.Request.Query.ContainsKey("sig"))
         {
-            var path = HttpUtility.UrlDecode(context.Request.Path.Value);
+            // Request.Path is already URL-decoded; decoding it again would corrupt names containing "+" or "%"
+            var path = context.Request.Path.Value;
             var pathSegments = path?.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
             if (pathSegments is { Length: >= 1 })
             {
                 var account = pathSegments[0]; // the first segment is the account
                 context.Items["account"] = account; // save it in HttpContext
-                context.Request.Path = "/" + string.Join('/', pathSegments.Skip(1)); // remove account from the path
+                context.Request.Path = new PathString("/" + string.Join('/', pathSegments.Skip(1))); // remove account from the path (implicit string conversion would URL-decode again)
             }
 
             var result = validator.Validate(context.Request);
