@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Adliance.AzureBlobSimulator.Models;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
 
 namespace Adliance.AzureBlobSimulator.Services;
@@ -115,7 +116,8 @@ public class SharedKeyAuthService(ILogger<SharedKeyAuthService> logger, IOptions
     private static string BuildCanonicalizedResource(HttpRequest request, string accountName)
     {
         // The spec requires the path "encoded exactly as it is in the URI", but request.Path is already decoded
-        // (e.g. "%2C" becomes ","), so we take the path from the raw request target instead.
+        // (e.g. "%2C" becomes ","), so we take the path from the raw request target instead. Re-encoding the
+        // decoded path is not an option, because clients differ in what they encode (e.g. "$logs" vs. "%24logs").
         var resource = $"/{accountName}{GetEncodedPath(request)}";
 
         if (!request.QueryString.HasValue)
@@ -142,8 +144,22 @@ public class SharedKeyAuthService(ILogger<SharedKeyAuthService> logger, IOptions
 
     private static string GetEncodedPath(HttpRequest request)
     {
-        var path = request.PathBase.Add(request.Path).Value ?? "";
-        return string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
+        var rawTarget = request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget;
+
+        if (string.IsNullOrEmpty(rawTarget))
+        {
+            // no raw target available (e.g. a request created in code), the decoded path is the best we have
+            return request.PathBase.Add(request.Path).Value ?? "";
+        }
+
+        // absolute-form request target (e.g. "http://host/account/container"), only the path is relevant
+        if (!rawTarget.StartsWith('/') && Uri.TryCreate(rawTarget, UriKind.Absolute, out var uri))
+        {
+            return uri.AbsolutePath;
+        }
+
+        var queryStart = rawTarget.IndexOf('?');
+        return queryStart >= 0 ? rawTarget[..queryStart] : rawTarget;
     }
 
     private static string? GetHeaderValue(HttpRequest request, string headerName)

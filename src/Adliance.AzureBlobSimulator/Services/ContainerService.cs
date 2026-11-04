@@ -23,10 +23,21 @@ public class ContainerService(IOptions<StorageOptions> options)
             return new List<string>();
         }
 
-        return Directory
-            .GetFiles(containerPath, "*", SearchOption.AllDirectories)
+        return GetFilesOrEmpty(containerPath)
             .Select(f => Path.GetRelativePath(containerPath, f).Replace("\\", "/"));
     }
+
+    /// <summary>
+    /// Returns all files of a container. System containers like $logs or $blobchangefeed
+    /// are not necessarily backed by a directory on disk, in which case they are treated as empty.
+    /// </summary>
+    public string[] GetContainerFiles(string container)
+        => GetFilesOrEmpty(GetContainerPath(container));
+
+    private static string[] GetFilesOrEmpty(string directory)
+        => Directory.Exists(directory)
+            ? Directory.GetFiles(directory, "*", SearchOption.AllDirectories)
+            : [];
 
     public string GetContainerPath(string container)
     {
@@ -58,9 +69,7 @@ public class ContainerService(IOptions<StorageOptions> options)
 
     public string GetContainerETag(string container)
     {
-        var containerPath = GetContainerPath(container);
-
-        var files = Directory.GetFiles(containerPath, "*", SearchOption.AllDirectories);
+        var files = GetContainerFiles(container);
 
         if (files.Length == 0)
         {

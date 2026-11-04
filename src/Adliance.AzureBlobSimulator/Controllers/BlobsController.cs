@@ -76,10 +76,8 @@ public class BlobsController(ContainerService containerService) : ControllerBase
         Response.Headers["x-ms-deny-encryption-scope-override"] = "false";
         Response.Headers.ETag = containerService.GetContainerETag(container);
 
-        var containerPath = containerService.GetContainerPath(container);
-
-        var lastModifiedTicks = Directory
-            .GetFiles(containerPath, "*", SearchOption.AllDirectories)
+        var lastModifiedTicks = containerService
+            .GetContainerFiles(container)
             .Select(f => new FileInfo(f).LastWriteTimeUtc.Ticks)
             .DefaultIfEmpty(DateTime.UtcNow.Ticks)
             .Max();

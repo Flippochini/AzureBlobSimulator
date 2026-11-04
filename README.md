@@ -43,6 +43,16 @@ For now, authentication is supported only via Shared Key. Make sure to include t
 
 `<protocol>://<domain or ip with port>/<account>`
 
+## Using Azure Storage Explorer (and AzCopy)
+
+When connecting via Azure Storage Explorer (or using AzCopy directly), use `127.0.0.1` instead of `localhost`,
+e.g. `http://127.0.0.1:10000/devstoreaccount1`.
+
+Storage Explorer performs uploads via AzCopy, which only recognizes the `/<account>/<container>/<blob>` URL format
+when the host is a literal IP address. With `localhost`, it treats the account name as the container and the
+actual container as part of the blob name, which results in requests like
+`HEAD /devstoreaccount1/my-container%2Fmy-file.pdf` that fail.
+
 
 ## Available as a Docker image
 
